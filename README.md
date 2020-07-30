@@ -22,9 +22,10 @@ To score model, run:
 python ./score.py --ckpt_download_url https://onebigdatabag.blob.core.windows.net/shared/base_epoch%3D12-val_loss%3D0.02616.ckpt
 
 Score.py also generate an error log for failed prediction for further analysis
-===================== ERROR ========================
-Question: What is the English name of the country whose official native language is Dutch Papiamento?
-Pred: select [country ( endonym )] from [1-1008653-1] where [official or native language(s) (alphabet/script)] = 'dutch papiamento' lf: {'sel': 2, 'agg': 0, 'conds': [[4, 0, 'Dutch Papiamento']], 'where_value_idx': [[74]]} RESULT: [('aruba aruba',)]
-True: select [country ( exonym )] from [1-1008653-1] where [official or native language(s) (alphabet/script)] = 'dutch papiamento' lf: {'sel': 0, 'conds': [[4, 0, 'Dutch Papiamento']], 'agg': 0} RESULT: [('aruba',)]
+
+===================== ERROR ========================\newline
+Question: What is the English name of the country whose official native language is Dutch Papiamento?\newline
+Pred: select [country ( endonym )] from [1-1008653-1] where [official or native language(s) (alphabet/script)] = 'dutch papiamento' lf:{'sel': 2, 'agg': 0, 'conds': [[4, 0, 'Dutch Papiamento']], 'where_value_idx': [[74]]} RESULT: [('aruba aruba',)] \newline
+True: select [country ( exonym )] from [1-1008653-1] where [official or native language(s) (alphabet/script)] = 'dutch papiamento' lf: {'sel': 0, 'conds': [[4, 0, 'Dutch Papiamento']], 'agg': 0} RESULT: [('aruba',)] \newline
 
 
