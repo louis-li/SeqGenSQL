@@ -23,6 +23,7 @@ python ./train.py
 
 ## Score
 To score model, run:
+
 python ./score.py --ckpt_download_url https://onebigdatabag.blob.core.windows.net/shared/base_epoch%3D12-val_loss%3D0.02616.ckpt
 
 Score.py also generate an error log for failed prediction for further analysis (Logical form from prediction is generated after prediction for execution purposes)
