@@ -17,7 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_type', default="dev", help="train|dev|test")
     parser.add_argument("--output_dir", default=".")
     parser.add_argument("--base_model", default="t5-base")
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--ckpt_download_url", default=None)
     parser.add_argument("--ckpt_path", default="SeqGenSQL.ckpt")
     parser.add_argument("--include_data_type", default=True)
