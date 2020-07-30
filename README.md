@@ -24,6 +24,7 @@ python ./score.py --ckpt_download_url https://onebigdatabag.blob.core.windows.ne
 Score.py also generate an error log for failed prediction for further analysis
 
 ===================== ERROR ========================
+
 Question: What is the English name of the country whose official native language is Dutch Papiamento?
 
 Pred: select [country ( endonym )] from [1-1008653-1] where [official or native language(s) (alphabet/script)] = 'dutch papiamento' lf:{'sel': 2, 'agg': 0, 'conds': [[4, 0, 'Dutch Papiamento']], 'where_value_idx': [[74]]} RESULT: [('aruba aruba',)] 
