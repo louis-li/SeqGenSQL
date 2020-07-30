@@ -17,7 +17,11 @@ In this model, we experimented with following:
 4. Gated Extraction Network
 - Modifed T5 and add a gate layer to decide whether a token should be extracted / generated. 
 
+## Train
+python ./train.py
 
+
+## Score
 To score model, run:
 python ./score.py --ckpt_download_url https://onebigdatabag.blob.core.windows.net/shared/base_epoch%3D12-val_loss%3D0.02616.ckpt
 
