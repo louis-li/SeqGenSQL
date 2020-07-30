@@ -17,19 +17,25 @@ from torch.utils.data import Dataset, DataLoader
 ## WikiSql Dataset
 ######################################################################
 class WikiSqlDataset(Dataset):
-  def __init__(self, tokenizer, data_dir, dataset_type, include_data_type = True, include_sample_data = 0, data_augmentation = [], max_input_len=300, max_output_len = 200):
+  def __init__(self, tokenizer, data_dir, dataset_type, 
+               include_data_type = True, include_sample_data = 0, 
+               data_augmentation = [], generated_data = [], generated_data_dropout = True,
+               max_input_len=512, max_output_len = 200):
     self.dataset_type = dataset_type
     self.data_file = os.path.join(data_dir, dataset_type+'.jsonl')
     self.table_file = os.path.join(data_dir, dataset_type+'.tables.jsonl')
+    self.generated_data = generated_data
 
     self.max_input_len = max_input_len
     self.max_output_len = max_output_len
     self.data_augmentation = data_augmentation 
     self.tokenizer = tokenizer
     self.tokenizer.sep_token = '<sep>'
+    self.generated_data_dropout = generated_data_dropout
 
     self.inputs = []
     self.targets = []
+    self.generated_data_flag=[]
 
     # raw data
     self.data = []
@@ -63,6 +69,7 @@ class WikiSqlDataset(Dataset):
 
     # input = question + table id + (column names, column types)
     input = question + self.tokenizer.sep_token + table_id
+    question_pos = len(self.tokenizer.encode(question))
 
     # mask for gated layer
     gate_mask = [1] * self._get_encode_length(input)  # consider questions
@@ -118,7 +125,8 @@ class WikiSqlDataset(Dataset):
       gate_mask = gate_mask[:self.max_input_len]
 
     gate_mask = torch.Tensor(gate_mask)
-    return input, sql_statement , gate_mask  
+    return input, sql_statement , gate_mask  , question_pos  
+
 
   # This is a data augmentation method: to replace select column using randomly selected column
   def _replace_select_col(self, data):
@@ -136,8 +144,8 @@ class WikiSqlDataset(Dataset):
     
     if question.find(sel_name) > -1:
         new_data['sql']['sel'] = new_col
-    input, sql_statement , gate_mask= self._build_input_output(new_data)
-    return input, sql_statement, gate_mask
+    input, sql_statement , gate_mask, question_pos = self._build_input_output(new_data)
+    return input, sql_statement, gate_mask, question_pos 
 
   # this is augmentation method 2: replace where value with any value from database
   def _replace_where_val(self, data):
@@ -166,8 +174,8 @@ class WikiSqlDataset(Dataset):
         new_data['sql']['conds'][cond_idx][2] = new_where_value
     
     # Generate tokens
-    input, sql_statement, gate_mask = self._build_input_output(new_data)
-    return input, sql_statement, gate_mask
+    input, sql_statement, gate_mask, question_pos  = self._build_input_output(new_data)
+    return input, sql_statement, gate_mask, question_pos 
 
   def __getitem__(self, index):
     # Augmenting train set only
@@ -182,13 +190,19 @@ class WikiSqlDataset(Dataset):
         target_mask = self.targets[index]["attention_mask"].squeeze()  # might need to squeeze
 
         gate_mask = self.gate_masks[index].squeeze()
+
+        # Input token drop out
+        if self.dataset_type == 'train' and self.generated_data_flag[index] > 0 and self.generated_data_dropout:
+            #drop out 1 token
+            pos = np.random.randint(self.generated_data_flag[index])
+            source_ids[pos] = self.tokenizer.pad_token_id
     else:
         # generate input and output
         aug = np.random.choice(self.data_augmentation)
         if aug == 'select_column':
-            input_string, target_string, gate_mask = self._replace_select_col(self.data[index]) 
+            input_string, target_string, gate_mask, question_pos = self._replace_select_col(self.data[index]) 
         elif aug == 'where_value' :
-            input_string, target_string, gate_mask = self._replace_where_val(self.data[index]) 
+            input_string, target_string, gate_mask, question_pos = self._replace_where_val(self.data[index]) 
         
         self.input_string.append(input_string)
         self.target_string.append(target_string)
@@ -213,7 +227,7 @@ class WikiSqlDataset(Dataset):
         "source_mask": src_mask, "target_mask": target_mask, 'gate_mask': gate_mask}
 
   
-  def _build(self):
+  def _build(self):  
     # load all data from file
     with open(self.table_file) as f:
         for idx, line in enumerate(f):
@@ -221,13 +235,14 @@ class WikiSqlDataset(Dataset):
             self.tables[t1['id']] = t1
             
     with open(self.data_file) as f:
+        print("Loading {} ...".format(self.data_file), end="")            
         for idx, line in enumerate(f):
             sql = json.loads(line.strip())
             self.data.append(sql)  
 
             if self.dataset_type != 'train' or self.data_augmentation == []:
                 # generate input and output
-                input_string, sql_statement,gate_mask = self._build_input_output(sql) 
+                input_string, sql_statement,gate_mask, _ = self._build_input_output(sql) 
 
                 self.input_string.append(input_string)
                 self.target_string.append(sql_statement)
@@ -243,4 +258,36 @@ class WikiSqlDataset(Dataset):
                 self.inputs.append(tokenized_inputs)
                 self.targets.append(tokenized_targets)
                 self.gate_masks.append(gate_mask)
+                self.generated_data_flag.append(0)  # not generated data
+        print("Done!")    
+        
+    if self.dataset_type == 'train':
+
+        for gen_file in self.generated_data:
+            print("Loading {} ...".format(gen_file), end="")
+            with open(gen_file) as f:
+                for idx, line in enumerate(f):
+                    sql = json.loads(line.strip())
+                    self.data.append(sql)  
+
+                    if self.data_augmentation == []:
+                        # generate input and output
+                        input_string, sql_statement, gate_mask,question_pos = self._build_input_output(sql) 
+
+                        self.input_string.append(input_string)
+                        self.target_string.append(sql_statement)
+                        # tokenize inputs
+                        tokenized_inputs = self.tokenizer.batch_encode_plus(
+                            [input_string], max_length=self.max_input_len, pad_to_max_length=True, return_tensors="pt"
+                        )
+                        # tokenize targets
+                        tokenized_targets = self.tokenizer.batch_encode_plus(
+                            [sql_statement], max_length=self.max_output_len, pad_to_max_length=True, return_tensors="pt"
+                        )
+
+                        self.inputs.append(tokenized_inputs)
+                        self.targets.append(tokenized_targets)
+                        self.gate_masks.append(gate_mask)
+                        self.generated_data_flag.append(question_pos)  # generated data
+            print("Done!")
 

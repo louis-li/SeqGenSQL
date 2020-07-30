@@ -1,4 +1,4 @@
-from dataloader import WikiSqlDataset
+from dataset import WikiSqlDataset
 from model import LoggingCallback,SeqGenSQL
 from dbengine_seqgen import DBEngine as db
 import argparse

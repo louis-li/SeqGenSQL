@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn import CrossEntropyLoss
 import multiprocessing
+from dataset import WikiSqlDataset
 
 from transformers import (
     AdamW,
@@ -50,6 +51,7 @@ class LayerNorm(pl.LightningModule):
 ######################################################################
 ## T5 Model with modified layer for WikiSQL
 ######################################################################
+
 class SeqGenSQL(pl.LightningModule):
   def __init__(self, hparams):
     super(SeqGenSQL, self).__init__()
@@ -63,12 +65,17 @@ class SeqGenSQL(pl.LightningModule):
     self.tokenizer = T5Tokenizer.from_pretrained(hparams.model_name_or_path)
     
     if hparams.use_modified_network:
+        #hparam.max_seq_lengt 
+        self.inner_dim = self.model.config.num_heads * self.model.config.d_kv
+        self.q =  nn.Linear(self.model.config.d_model, self.inner_dim, bias = False) 
+        self.k =  nn.Linear(self.model.config.d_model, self.inner_dim, bias = False) 
+        self.v =  nn.Linear(self.model.config.d_model, self.inner_dim, bias = False) 
         self.layer_norm_gen = LayerNorm(self.model.config.d_model, eps=self.model.config.layer_norm_epsilon)
         self.layer_norm_ext = LayerNorm(self.model.config.d_model, eps=self.model.config.layer_norm_epsilon)
-
+     
         # Added gated layer with model.config.d_model
         self.ff_gate = nn.Linear(self.model.config.d_model * 2,1, bias = False) 
-        self.ff_extract_attention = nn.Linear(self.model.config.d_model, self.model.config.d_model, bias = False) 
+        self.o = nn.Linear(self.inner_dim, self.model.config.d_model, bias = False) 
     
   
   def is_logger(self):
@@ -122,23 +129,43 @@ class SeqGenSQL(pl.LightningModule):
       ######################################################    
       # Get hidden state for input
       # To get the output of encoder, use model.get_encoder()(batch["source_ids"])
+      bs, qlen, dim = output_hidden_state.size()
+      def shape(x):
+        """  projection """
+        return x.view(bs, -1, self.model.config.num_heads, self.model.config.d_kv).transpose(1, 2)
+      def unshape(x):
+        """  compute context """
+        return x.transpose(1, 2).contiguous().view(bs, -1, self.inner_dim)
+        
       input_hidden_state = self.model.get_encoder()(batch["source_ids"])[0] #[batch_size, input_len, d_model]
-      #print(len(self.model.get_encoder()(batch["source_ids"])))
-
+      q = shape(self.q (output_hidden_state)) #[batch_size, n_heads,  input_len, dim_per_head]
+      #print("q shape:", q.shape)
+      v = shape(self.v(input_hidden_state))  #[batch_size, n_heads, output_len, dim_per_head]
+      #print("v shape:", v.shape)
+      k = shape(self.k(input_hidden_state)) #[batch_size, n_heads,  output_len, dim_per_head]  
+      #print("k shape:", k.shape)
+      
       # Simplified CrossAttention
-      scores = torch.einsum("bqd,bkd->bqk", output_hidden_state ,input_hidden_state)         # (batch, output_len, input_len)
+      scores = torch.einsum("bnqd,bnkd->bnqk", q ,k)         # (batch, n_heads, output_len, input_len)
+      #print("scores shape:", scores.shape)
+      
       # mask datatypes, data values from input
-      gate_masks = torch.unsqueeze(batch['gate_mask'], dim=1)
-      scores = scores * gate_masks
+      #gate_masks = torch.unsqueeze(batch['gate_mask'], dim=1)
+      #scores = scores * gate_masks
     
-      weights = F.softmax(scores.float(), dim=-1 ).type_as(scores)                           # (batch, output_len, input_len)
-      weights = nn.Dropout(p=self.model.config.dropout_rate) (weights)       # (batch, output_len, input_len)
+      weights = F.softmax(scores.float(), dim=-1 ).type_as(scores)    # (batch, n_heads, output_len, input_len)
+      #print("weights shape:", weights.shape)
+      weights = nn.Dropout(p=self.model.config.dropout_rate) (weights) # (batch, n_heads, output_len, input_len)
 
       # Context
-      context = torch.matmul(weights, input_hidden_state)   # (batch, output_len, d_model)  
+      context = torch.matmul(weights, v)   # (batch, n_heads, output_len, dim_per_head)  
+      #print("context shape:", context.shape)
+      context = unshape(context)
+      #print("context shape:", context.shape)
       
       # Feed Forward layer
-      context = self.ff_extract_attention(context)              # (batch, output_len, d_model)
+      context = self.o(context)              # (batch, output_len, d_model)
+      #print("context shape:", context.shape)
 
       # Scale like original T5
       # this step is required because both branches need to be at the same scale
@@ -230,7 +257,7 @@ class SeqGenSQL(pl.LightningModule):
   def train_dataloader(self):
     train_dataset = self.get_dataset(data_type="train")
     dataloader = DataLoader(train_dataset, batch_size=self.hparams.train_batch_size, 
-                            drop_last=True, shuffle=True, num_workers=num_of_workers)
+                            drop_last=True, shuffle=True, num_workers=self.hparams.num_of_workers)
     t_total = (
         (len(dataloader.dataset) // (self.hparams.train_batch_size * max(1, self.hparams.n_gpu)))
         // self.hparams.gradient_accumulation_steps
@@ -244,7 +271,31 @@ class SeqGenSQL(pl.LightningModule):
 
   def val_dataloader(self):
     val_dataset = self.get_dataset(data_type="dev")
-    return DataLoader(val_dataset, batch_size=self.hparams.eval_batch_size, drop_last=True, num_workers=num_of_workers)
+    return DataLoader(val_dataset, batch_size=self.hparams.eval_batch_size, drop_last=True, num_workers=self.hparams.num_of_workers)
+
+class LoggingCallback(pl.Callback):
+  def on_validation_end(self, trainer, pl_module):
+    logger.info("***** Validation results *****")
+    if pl_module.is_logger():
+      metrics = trainer.callback_metrics
+      # Log results
+      for key in sorted(metrics):
+        if key not in ["log", "progress_bar"]:
+          logger.info("{} = {}\n".format(key, str(metrics[key])))
+
+  def on_test_end(self, trainer, pl_module):
+    logger.info("***** Test results *****")
+
+    if pl_module.is_logger():
+      metrics = trainer.callback_metrics
+
+      # Log and save results to file
+      output_test_results_file = os.path.join(pl_module.hparams.output_dir, "test_results.txt")
+      with open(output_test_results_file, "w") as writer:
+        for key in sorted(metrics):
+          if key not in ["log", "progress_bar"]:
+            logger.info("{} = {}\n".format(key, str(metrics[key])))
+            writer.write("{} = {}\n".format(key, str(metrics[key])))
 
 ######################################################################
 ## Logging
