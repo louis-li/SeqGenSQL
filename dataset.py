@@ -20,7 +20,7 @@ class WikiSqlDataset(Dataset):
   def __init__(self, tokenizer, data_dir, dataset_type, 
                include_data_type = True, include_sample_data = 0, 
                data_augmentation = [], generated_data = [], generated_data_dropout = True,
-               max_input_len=512, max_output_len = 200):
+               max_input_len=512, max_output_len = 200,include_question = False):
     self.dataset_type = dataset_type
     self.data_file = os.path.join(data_dir, dataset_type+'.jsonl')
     self.table_file = os.path.join(data_dir, dataset_type+'.tables.jsonl')
@@ -32,6 +32,7 @@ class WikiSqlDataset(Dataset):
     self.tokenizer = tokenizer
     self.tokenizer.sep_token = '<sep>'
     self.generated_data_dropout = generated_data_dropout
+    self.include_question = include_question
 
     self.inputs = []
     self.targets = []
@@ -222,7 +223,12 @@ class WikiSqlDataset(Dataset):
         src_mask    = tokenized_inputs["attention_mask"].squeeze()  # might need to squeeze
         target_mask = tokenized_targets["attention_mask"].squeeze()  # might need to squeeze
 
-    return {"source_ids": source_ids, "target_ids": target_ids, 
+    if self.include_question :
+      return {"source_ids": source_ids, "target_ids": target_ids, 
+        "question": self.data[index]['question'],
+        "source_mask": src_mask, "target_mask": target_mask, 'gate_mask': gate_mask}
+    else:
+      return {"source_ids": source_ids, "target_ids": target_ids, 
         #"input_string": input_string, "target_string": target_string, 
         "source_mask": src_mask, "target_mask": target_mask, 'gate_mask': gate_mask}
 

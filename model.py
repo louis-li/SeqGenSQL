@@ -302,13 +302,13 @@ class LoggingCallback(pl.Callback):
 ######################################################################
 class LoggingCallback(pl.Callback):
   def on_validation_end(self, trainer, pl_module):
-    logger.info("***** Validation results *****")
+    #logger.info("***** Validation results *****")
     if pl_module.is_logger():
       metrics = trainer.callback_metrics
       # Log results
-      for key in sorted(metrics):
-        if key not in ["log", "progress_bar"]:
-          logger.info("{} = {}\n".format(key, str(metrics[key])))
+      #for key in sorted(metrics):
+      #  if key not in ["log", "progress_bar"]:
+      #    logger.info("{} = {}\n".format(key, str(metrics[key])))
 
   def on_test_end(self, trainer, pl_module):
     logger.info("***** Test results *****")
