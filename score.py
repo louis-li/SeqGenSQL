@@ -112,7 +112,8 @@ if __name__ == '__main__':
                     dec = model.tokenizer.decode(beam_output)
                     if execution_failed:
                         print("  ",dec)
-                    pred_lf = generate_logical_form(model.tokenizer, dec, dataset.tables, "sql")
+                    pred_lf = dbeng.generate_logical_form(model.tokenizer, dec, 
+                    dataset.tables, dataset.agg_ops, dataset.cond_ops,"sql")
                     pred_result = dbeng.execute_query(table_id = pred_lf["table_id"], query = pred_lf)
                     guided_out = dec
                     break               
@@ -145,7 +146,8 @@ if __name__ == '__main__':
             if t == d:
                 correct += 1
             else:
-                pred_lf = generate_logical_form(model.tokenizer, d,i['question'], dataset.tables, "sql")
+                pred_lf = dbeng.generate_logical_form(model.tokenizer, d,i['question'], 
+                          dataset.tables, dataset.agg_ops, dataset.cond_ops,"sql")
                 if pred_lf['sql']!={}:
                     pred_result = dbeng.execute_query(table_id = pred_lf["table_id"], query = pred_lf)
                 else:
