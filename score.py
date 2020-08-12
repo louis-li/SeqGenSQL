@@ -26,14 +26,12 @@ if __name__ == '__main__':
     parser.add_argument("--use_modified_network", default=False, help="Use gated layer to decide whether to extract or to generate")
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--max_output_length", type=int, default=200)
-    parser.add_argument("--num_return_sequences", default=1)
+    parser.add_argument("--num_return_sequences", type=int, default=1)
     parser.add_argument("--device", default="cuda", help="cpu|cuda")
     parser.add_argument("--silent", default=False, help="Output paramters")
     args = parser.parse_args()
   
-    if args.num_return_sequences  == 1:
-        args.batch_size =32
-    else:
+    if args.num_return_sequences  > 1:
         args.batch_size = 1
 
     model_name = os.path.basename(args.ckpt_path)
@@ -52,7 +50,7 @@ if __name__ == '__main__':
     print("Loading database file...", end="")
     dbeng = db('{}/{}.db'.format(args.data_dir, args.data_type))
     print("Done!")
-    
+
     print("Loading T5FinalTuner pretrained model...", end="")
     model = SeqGenSQL.load_from_checkpoint(args.ckpt_path)
     print("Done!")
@@ -63,15 +61,17 @@ if __name__ == '__main__':
         print("Done!")
 
 
-    print("Loading dataset...", end="")
+    print("Loading dataset...")
     dataset = WikiSqlDataset(model.tokenizer, 
         args.data_dir, 
         args.data_type,
         include_sample_data =args.num_sample_rows, 
         max_input_len=args.max_seq_length, 
-        max_output_len=args.max_output_length)
-    print("Done!")
-                        
+        max_output_len=args.max_output_length,include_question = True)
+
+    if args.num_return_sequences  > 1:
+        args.batch_size = 1
+
     # generate sql statement
     print("Generating sequences...", end="")
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
@@ -79,17 +79,17 @@ if __name__ == '__main__':
     targets = []
     di = 0
     for batch in tqdm(loader):
-        
+
         if args.num_return_sequences == 1:
             input_ids = batch['source_ids']
             attention_mask = batch['source_mask']
         else:
-            input_ids = torch.unsqueeze(batch['source_ids'],0)
-            attention_mask = torch.unsqueeze(batch['source_mask'],0)
-            #input_ids = batch['source_ids']
-            #attention_mask = batch['source_mask']
-            
-            
+            # input_ids = torch.unsqueeze(batch['source_ids'],0)
+            # attention_mask = torch.unsqueeze(batch['source_mask'],0)
+            input_ids = batch['source_ids']
+            attention_mask = batch['source_mask']
+
+
         if args.device == 'cuda':
             outs = model.model.generate(input_ids=input_ids.cuda(), 
                                         attention_mask=attention_mask.cuda(), 
@@ -102,24 +102,25 @@ if __name__ == '__main__':
                             max_length=args.max_output_length,
                             num_beams = args.num_return_sequences, 
                             num_return_sequences = args.num_return_sequences)
-            
+
         if args.num_return_sequences > 1:
             guided_out = model.tokenizer.decode(outs[0])
-            target = model.tokenizer.decode(batch["target_ids"])
+            target = model.tokenizer.decode(batch["target_ids"][0])
             execution_failed = False
             for i, beam_output in enumerate(outs):
                 try:
                     dec = model.tokenizer.decode(beam_output)
                     if execution_failed:
                         print("  ",dec)
-                    pred_lf = dbeng.generate_logical_form(model.tokenizer, dec, 
-                    dataset.tables, dataset.agg_ops, dataset.cond_ops,"sql")
+                    pred_lf = dbeng.generate_logical_form(model.tokenizer, dec,batch['question'][0],
+                                                        dataset.tables,
+                                                        dataset.agg_ops, dataset.cond_ops,"sql")                    
                     pred_result = dbeng.execute_query(table_id = pred_lf["table_id"], query = pred_lf)
                     guided_out = dec
                     break               
                 except:
                     print("====================================================")
-                    print("question {}: {}".format(di, model.tokenizer.decode(d['source_ids']).replace('⁇','<')))
+                    print("question {}: {}".format(di, model.tokenizer.decode(batch['source_ids'][0]).replace('⁇','<')))
                     #print(d)
                     print("  True:", target.replace('⁇','<'))
                     print("  Pred:", dec.replace('⁇','<'))
@@ -146,8 +147,9 @@ if __name__ == '__main__':
             if t == d:
                 correct += 1
             else:
-                pred_lf = dbeng.generate_logical_form(model.tokenizer, d,i['question'], 
-                          dataset.tables, dataset.agg_ops, dataset.cond_ops,"sql")
+                pred_lf = dbeng.generate_logical_form(model.tokenizer, d,i['question'],
+                                                      dataset.tables,
+                                                      dataset.agg_ops, dataset.cond_ops,"sql")
                 if pred_lf['sql']!={}:
                     pred_result = dbeng.execute_query(table_id = pred_lf["table_id"], query = pred_lf)
                 else:
@@ -156,7 +158,7 @@ if __name__ == '__main__':
                     f.write("Pred: {} lf: {} RESULT: {}\n".format(d,pred_lf['sql'],pred_result))
                     f.write("True: {} lf: {} RESULT: {}\n\n".format(t, i['sql'], true_result))
                     continue
-                
+
                 true_result = dbeng.execute_query(table_id = i["table_id"], query = i)
                 if (pred_result == true_result):
                     correct += 1
@@ -177,13 +179,13 @@ if __name__ == '__main__':
                             incorrect['cond_cop_neg'] += 1
                         if i['question'].find(str(c[2])) == -1:
                             incorrect['cond_val_neg'] += 1
-                            
+
         except:
             f.write("===================== ERROR ========================\n")
             f.write("Question: {}\n".format(i['question']))
             f.write("Pred: {} lf: {}\n".format(d,pred_lf['sql']))
             f.write("True: {} lf: {}\n\n".format(t, i['sql']))
-            
+
             #print(pred_lf['sql']['sel'])
             if (pred_lf['sql']['sel'] == -1):
                 incorrect['sel_neg'] += 1
